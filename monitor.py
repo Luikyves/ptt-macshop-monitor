@@ -12,7 +12,7 @@ from datetime import datetime
 
 from scraper import (
     fetch, get_sell_links, scrape_post,
-    TARGET_SPECS, SEARCH_QUERIES,
+    AIR_SPECS, PRO_SPECS, SEARCH_QUERIES,
     BASE_URL, BOARD,
 )
 from config import GMAIL_USER, GMAIL_APP_PASSWORD, NOTIFY_EMAIL
@@ -52,7 +52,7 @@ def check_new_listings(medians: dict[str, int], seen: set[str]) -> list[dict]:
     """掃描搜尋結果的第一頁，找出價格 <= 中位數的好價商品"""
     good_deals = []
 
-    for chip, query in SEARCH_QUERIES.items():
+    for query, spec_table in SEARCH_QUERIES.items():
         encoded_q = query.replace(" ", "+")
         url = f"{BASE_URL}/bbs/{BOARD}/search?q={encoded_q}"
         soup = fetch(url)
@@ -65,7 +65,7 @@ def check_new_listings(medians: dict[str, int], seen: set[str]) -> list[dict]:
                 continue
 
             seen.add(href)
-            pairs = scrape_post(href, title)
+            pairs = scrape_post(href, title, spec_table)
 
             for spec_name, price in pairs:
                 median = medians.get(spec_name)

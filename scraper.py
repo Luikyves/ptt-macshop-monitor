@@ -31,16 +31,31 @@ SESSION = _make_session()
 
 # 目標規格：(chip, ram_gb, storage_gb) -> 顯示名稱
 TARGET_SPECS: dict[tuple[str, int, int], str] = {
-    ("M1", 8,  256): "MacBook Air M1 8/256",
-    ("M1", 16, 512): "MacBook Air M1 16/512",
-    ("M2", 8,  256): "MacBook Air M2 8/256",
-    ("M2", 16, 512): "MacBook Air M2 16/512",
+    ("M1",  8,  256): "MacBook Air M1 8/256",
+    ("M1", 16,  512): "MacBook Air M1 16/512",
+    ("M2",  8,  256): "MacBook Air M2 8/256",
+    ("M2", 16,  512): "MacBook Air M2 16/512",
+    ("M1", 16,  512): "MacBook Pro M1 16/512",   # Pro 與 Air 同 key，由搜尋關鍵字區分
+    ("M2", 16,  512): "MacBook Pro M2 16/512",
+}
+
+# Air / Pro 各自的 key
+AIR_SPECS: dict[tuple[str, int, int], str] = {
+    ("M1",  8,  256): "MacBook Air M1 8/256",
+    ("M1", 16,  512): "MacBook Air M1 16/512",
+    ("M2",  8,  256): "MacBook Air M2 8/256",
+    ("M2", 16,  512): "MacBook Air M2 16/512",
+}
+
+PRO_SPECS: dict[tuple[str, int, int], str] = {
+    ("M1", 16, 512): "MacBook Pro M1 16/512",
+    ("M2", 16, 512): "MacBook Pro M2 16/512",
 }
 
 SELL_TAGS_RE = re.compile(r"^\[(?:販售|出售|售|賣|[Ss])\]")
 
-# 找晶片型號
-CHIP_RE = re.compile(r"MacBook\s*Air\s*(M[12])", re.IGNORECASE)
+# 找晶片型號（只抓 M1 / M2，不管 Pro/Max）
+CHIP_RE = re.compile(r"MacBook\s*(?:Air|Pro)\s*(M[12])", re.IGNORECASE)
 
 # RAM pattern：支援 8G / 8GB / 8g / 16G / 16GB
 RAM_RE = re.compile(r"\b(8|16|24|32)\s*[Gg][Bb]?\b")
@@ -59,10 +74,6 @@ EXCLUDE_NUMS = {128, 256, 512, 1024, 2048, 8192, 16384}
 
 def is_sell_post(title: str) -> bool:
     return bool(SELL_TAGS_RE.match(title))
-
-
-def has_macbook_air(text: str) -> bool:
-    return bool(CHIP_RE.search(text))
 
 
 def extract_chip(text: str) -> str | None:
@@ -178,7 +189,7 @@ def get_search_last_page(soup: BeautifulSoup) -> int:
     return max_page
 
 
-def scrape_post(href: str, title: str) -> list[tuple[str, int]]:
+def scrape_post(href: str, title: str, spec_table: dict) -> list[tuple[str, int]]:
     """回傳 [(spec_name, price), ...]，只包含目標規格"""
     soup = fetch(BASE_URL + href)
     if not soup:
@@ -198,10 +209,9 @@ def scrape_post(href: str, title: str) -> list[tuple[str, int]]:
     if not chip:
         return []
 
-    # 先嘗試在 MacBook Air 所在段落內找規格（避免讀到其他商品的規格）
+    # 先嘗試在 MacBook 所在段落內找規格（避免讀到其他商品的規格）
     item_num = find_item_number_for_macbook(content)
     if item_num is not None:
-        # 找出該編號段落的文字
         for m in NUMBERED_SECTION_RE.finditer(content):
             if int(m.group(1)) == item_num:
                 section_text = m.group(2)
@@ -218,32 +228,33 @@ def scrape_post(href: str, title: str) -> list[tuple[str, int]]:
     ram, storage = spec
     key = (chip, ram, storage)
 
-    if key not in TARGET_SPECS:
+    if key not in spec_table:
         return []
 
     price = extract_price(content, item_number=item_num)
     if not price:
         return []
 
-    return [(TARGET_SPECS[key], price)]
+    return [(spec_table[key], price)]
 
 
-# 每個晶片對應的搜尋關鍵字
+# 搜尋關鍵字 -> 對應的 spec table
 SEARCH_QUERIES = {
-    "M1": "macbook air m1",
-    "M2": "macbook air m2",
+    "macbook air m1":  AIR_SPECS,
+    "macbook air m2":  AIR_SPECS,
+    "macbook pro m1":  PRO_SPECS,
+    "macbook pro m2":  PRO_SPECS,
 }
 
 # 去重用：記錄已處理的文章 href
 _seen_hrefs: set[str] = set()
 
 
-def scrape_search(query: str, chip: str, max_search_pages: int = 50) -> dict[str, list[int]]:
-    """用 PTT 搜尋功能爬特定晶片的所有頁面"""
+def scrape_search(query: str, spec_table: dict, max_search_pages: int = 50) -> dict[str, list[int]]:
+    """用 PTT 搜尋功能爬特定關鍵字的所有頁面"""
     product_data: dict[str, list[int]] = defaultdict(list)
     encoded_q = query.replace(" ", "+")
 
-    # 先取第一頁，得知總頁數
     first_url = f"{BASE_URL}/bbs/{BOARD}/search?q={encoded_q}"
     soup = fetch(first_url)
     if not soup:
@@ -257,13 +268,11 @@ def scrape_search(query: str, chip: str, max_search_pages: int = 50) -> dict[str
     matched_count = 0
 
     for page_num in range(1, total_pages + 1):
-        if page_num == 1:
-            page_soup = soup
-        else:
-            url = f"{BASE_URL}/bbs/{BOARD}/search?page={page_num}&q={encoded_q}"
-            page_soup = fetch(url)
-            if not page_soup:
-                continue
+        page_soup = soup if page_num == 1 else fetch(
+            f"{BASE_URL}/bbs/{BOARD}/search?page={page_num}&q={encoded_q}"
+        )
+        if not page_soup:
+            continue
 
         links = get_sell_links(page_soup)
         for title, href in links:
@@ -271,7 +280,7 @@ def scrape_search(query: str, chip: str, max_search_pages: int = 50) -> dict[str
                 continue
             _seen_hrefs.add(href)
             post_count += 1
-            pairs = scrape_post(href, title)
+            pairs = scrape_post(href, title, spec_table)
             for spec_name, price in pairs:
                 product_data[spec_name].append(price)
                 matched_count += 1
@@ -285,14 +294,15 @@ def scrape_search(query: str, chip: str, max_search_pages: int = 50) -> dict[str
 
 
 def scrape(max_search_pages: int = 50) -> dict[str, list[int]]:
+    all_specs = {**AIR_SPECS, **PRO_SPECS}
     print(f"開始爬取 PTT MacShop（使用搜尋功能）")
-    print(f"目標規格：{', '.join(TARGET_SPECS.values())}\n")
+    print(f"目標規格：{', '.join(all_specs.values())}\n")
 
     all_data: dict[str, list[int]] = defaultdict(list)
 
-    for chip, query in SEARCH_QUERIES.items():
-        print(f"=== 搜尋 {chip} ===")
-        data = scrape_search(query, chip, max_search_pages=max_search_pages)
+    for query, spec_table in SEARCH_QUERIES.items():
+        print(f"=== 搜尋：{query} ===")
+        data = scrape_search(query, spec_table, max_search_pages=max_search_pages)
         for spec, prices in data.items():
             all_data[spec].extend(prices)
 
