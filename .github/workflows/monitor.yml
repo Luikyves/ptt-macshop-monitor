@@ -1,0 +1,38 @@
+name: PTT MacShop Monitor
+
+on:
+  schedule:
+    - cron: "0 2 * * *"   # 每天 10:00 台灣時間 (UTC+8)
+    - cron: "0 12 * * *"  # 每天 20:00 台灣時間 (UTC+8)
+  workflow_dispatch:       # 允許手動從 GitHub 網頁觸發
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run monitor
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
+        run: python monitor.py
+
+      - name: Commit seen_hrefs.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add seen_hrefs.json
+          git diff --cached --quiet || git commit -m "chore: update seen hrefs [skip ci]"
+          git push
