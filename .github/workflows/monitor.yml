@@ -2,8 +2,7 @@ name: PTT MacShop Monitor
 
 on:
   schedule:
-    - cron: "0 2 * * *"   # 每天 10:00 台灣時間 (UTC+8)
-    - cron: "0 12 * * *"  # 每天 20:00 台灣時間 (UTC+8)
+    - cron: "0 * * * *"   # 每小時執行一次
   workflow_dispatch:       # 允許手動從 GitHub 網頁觸發
 
 jobs:
